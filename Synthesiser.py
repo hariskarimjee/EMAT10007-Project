@@ -1,11 +1,14 @@
 import matplotlib.pyplot as plt
 from scipy import signal
+from scipy.io import wavfile
 import numpy as np
-import pyaudio, sys, threading
+import pyaudio, sys, threading, math, time
 import tkinter as tk
 
 BITRATE = 44100
+CHUNK = 1024
 
+phase = 0
 
 def waveform(frequency, waveshape):
     """
@@ -14,32 +17,25 @@ def waveform(frequency, waveshape):
     :param waveshape: Shape of wave (square, sine, sawtooth)
     :return: Returns array containing wave data
     """
-    t = 2
+    global phase
+    ti = 1
     f = frequency
-    time = np.linspace(0, t, int(t * BITRATE))
+    t = np.linspace(0, ti, int(ti * BITRATE))
 
     if waveshape == "sin":
-        sig = np.array(np.sin(2 * np.pi * f * time),dtype=np.float32)
+        sig = (np.sin(2 * np.pi * (f * t + phase)))
+        phase = math.modf(f * CHUNK / BITRATE)[0]
     elif waveshape == "sqr":
-        sig = np.array(signal.square(2 * np.pi * f * time),dtype=np.float32)
+        sig = np.array(signal.square(2 * np.pi * (f * t + phase)),dtype=np.float32)
+        phase = math.modf(f * CHUNK / BITRATE)[0]
     elif waveshape == "saw":
-        sig = np.array(signal.sawtooth(2 * np.pi * f * time),dtype=np.float32)
+        sig = np.array(signal.sawtooth(2 * np.pi * (f * t + phase)),dtype=np.float32)
+        phase = math.modf(f * CHUNK / BITRATE)[0]
+    elif waveshape == "tri":
+        sig = np.array(signal.sawtooth(2 * np.pi * (f * t + phase), width=0.5), dtype = np.float32)
+        phase = math.modf(f * CHUNK / BITRATE)[0]
+
     return sig
-
-
-def play_wave(wavef):
-    """
-    Streams wave to audio output using PyAudio
-    :param wavef: Array containing wave data
-    :return:
-    """
-    p = pyaudio.PyAudio()
-    wav = wavef.tobytes()
-    stream = p.open(format=pyaudio.paFloat32, channels=2, rate=BITRATE, output=True)
-    stream.write(wav)
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
 
 
 class LoopWave(threading.Thread):
@@ -59,12 +55,17 @@ class LoopWave(threading.Thread):
         """
         Loops audio from waveform in seperate thread from tkinter GUI
         """
-        wave = waveform(200, "sin")
         if not self.end_now:
+            p = pyaudio.PyAudio()
+            stream = p.open(format=pyaudio.paFloat32, channels=2, rate=BITRATE, output=True, frames_per_buffer=CHUNK)
             while not self.end_now:
-                play_wave(0.5 * wave)
+                stream.write(np.array(self.master.output_waveform()).astype(np.float32).tostring())
+            stream.stop_stream()
+            stream.close()
+            p.terminate()
         elif self.end_now:
             self.master.stop_sound()
+
 
 
 class Synthesiser(tk.Tk):
@@ -78,14 +79,45 @@ class Synthesiser(tk.Tk):
     """
     def __init__(self):
         super().__init__()
-
+        self.frequency = tk.IntVar()
+        self.frequency.set(220)
+        self.wave_list = []
+        self.shape_list = [("sine", "sin"), ("square", "sqr"), ("sawtooth", "saw"), ("triangular", "tri")]
+        self.wave_shape = tk.StringVar()
+        self.wave_shape.set("sin")
+        # Create sound, wave control buttons
         self.start_button = tk.Button(self, text="Play sound", padx=5, pady=5, command=(lambda: self.start_sound()))
         self.start_button.pack()
 
         self.stop_button = tk.Button(self, text="Stop sound", padx=5, pady=5, command=(lambda: self.stop_sound()))
         self.stop_button.pack()
 
+        self.add_wave_button = tk.Button(self, text="Add wave", padx=5, pady=5,
+                                         command=(lambda: self.add_wave(int(self.frequency_slider.get()),
+                                                                        self.wave_shape.get(),
+                                                                        self.volume_slider.get())))
+        self.add_wave_button.pack()
 
+        self.remove_wave_button = tk.Button(self, text="Remove wave", padx=5, pady=5,
+                                            command = lambda: self.remove_wave(self.wave_list_box.curselection()[0]))
+        self.remove_wave_button.pack()
+
+        self.clear_button = tk.Button(self, text="Clear waves", padx=5, pady=5, command=(lambda: self.clear_waves()))
+        self.clear_button.pack()
+
+        # Create Radiobuttons for selecting wave shape
+        for shape, shp in self.shape_list:
+            tk.Radiobutton(self, text=shape, variable=self.wave_shape, value=shp).pack()
+
+        # Create sliders to control frequency, volume
+        self.frequency_slider = tk.Scale(self, from_=1, to_=500, label="Frequency", orient=tk.HORIZONTAL, length=200, variable=self.frequency)
+        self.frequency_slider.pack()
+        self.volume_slider = tk.Scale(self, from_=0, to_=1, resolution=0.05, label="Volume", orient=tk.HORIZONTAL, length=200)
+        self.volume_slider.pack()
+        self.volume_slider.set(1)
+
+        self.wave_list_box = tk.Listbox()
+        self.wave_list_box.pack()
 
     def setup_worker(self):
 
@@ -100,7 +132,7 @@ class Synthesiser(tk.Tk):
 
     def stop_sound(self):
 
-        self.worker.end_now=True
+        self.worker.end_now = True
         del self.worker
 
     def stop_sound_exit(self):
@@ -110,6 +142,28 @@ class Synthesiser(tk.Tk):
             sys.exit()
         else:
             sys.exit()
+
+    def add_wave(self, frequency, shape, volume):
+        self.wave_list.append(volume * waveform(frequency, shape))
+        self.wave_list_box.insert(tk.END, "Freq: " + str(frequency) + "Hz" + " " + "Shape: " + str(shape))
+
+    def remove_wave(self, wave_index):
+        del self.wave_list[wave_index]
+        self.wave_list_box.delete(wave_index)
+
+    def clear_waves(self):
+        self.wave_list = []
+        self.wave_list_box.delete(0,tk.END)
+
+    def plot_waveform(self):
+        plt.plot(self.output_waveform())
+        plt.show()
+
+    def output_waveform(self):
+        wave = self.wave_list[0]
+        for wavef in self.wave_list[1:]:
+            wave = np.add(wave, wavef)
+        return (1/len(self.wave_list))*wave
 
 
 root = Synthesiser()
