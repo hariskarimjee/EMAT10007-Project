@@ -10,6 +10,7 @@ CHUNK = 1024
 
 phase = 0
 
+
 def waveform(frequency, waveshape):
     """
     Generates wave as data array - frequency of datapoints dependend on bitrate (quality of waveform)
@@ -67,7 +68,6 @@ class LoopWave(threading.Thread):
             self.master.stop_sound()
 
 
-
 class Synthesiser(tk.Tk):
     """
     Subclass of Tk which adds widgets for synthesiser control.
@@ -79,45 +79,48 @@ class Synthesiser(tk.Tk):
     """
     def __init__(self):
         super().__init__()
-        self.frequency = tk.IntVar()
-        self.frequency.set(220)
         self.wave_list = []
-        self.shape_list = [("sine", "sin"), ("square", "sqr"), ("sawtooth", "saw"), ("triangular", "tri")]
+        self.shape_list = [("sine", "sin", 0), ("square", "sqr", 1), ("sawtooth", "saw", 2), ("triangular", "tri", 3)]
         self.wave_shape = tk.StringVar()
         self.wave_shape.set("sin")
         # Create sound, wave control buttons
         self.start_button = tk.Button(self, text="Play sound", padx=5, pady=5, command=(lambda: self.start_sound()))
-        self.start_button.pack()
+        self.start_button.grid(row=0, column=0)
 
         self.stop_button = tk.Button(self, text="Stop sound", padx=5, pady=5, command=(lambda: self.stop_sound()))
-        self.stop_button.pack()
+        self.stop_button.grid(row=1, column=0)
+
+        self.plot_button = tk.Button(self, text="Plot wave", padx=5, pady=5, command=(lambda: self.plot_wave()))
+        self.plot_button.grid(row=2, column=0)
 
         self.add_wave_button = tk.Button(self, text="Add wave", padx=5, pady=5,
-                                         command=(lambda: self.add_wave(int(self.frequency_slider.get()),
+                                         command=(lambda: self.add_wave(self.frequency_slider.get(),
                                                                         self.wave_shape.get(),
                                                                         self.volume_slider.get())))
-        self.add_wave_button.pack()
+        self.add_wave_button.grid(row=0, column=1)
 
         self.remove_wave_button = tk.Button(self, text="Remove wave", padx=5, pady=5,
                                             command = lambda: self.remove_wave(self.wave_list_box.curselection()[0]))
-        self.remove_wave_button.pack()
+        self.remove_wave_button.grid(row=1, column=1)
 
         self.clear_button = tk.Button(self, text="Clear waves", padx=5, pady=5, command=(lambda: self.clear_waves()))
-        self.clear_button.pack()
+        self.clear_button.grid(row=2, column=1)
 
         # Create Radiobuttons for selecting wave shape
-        for shape, shp in self.shape_list:
-            tk.Radiobutton(self, text=shape, variable=self.wave_shape, value=shp).pack()
+
+        for shape, shp, row in self.shape_list:
+            tk.Radiobutton(self, text=shape, variable=self.wave_shape, value=shp).grid(row=row, column=2)
 
         # Create sliders to control frequency, volume
-        self.frequency_slider = tk.Scale(self, from_=1, to_=500, label="Frequency", orient=tk.HORIZONTAL, length=200, variable=self.frequency)
-        self.frequency_slider.pack()
-        self.volume_slider = tk.Scale(self, from_=0, to_=1, resolution=0.05, label="Volume", orient=tk.HORIZONTAL, length=200)
-        self.volume_slider.pack()
+        self.frequency_slider = tk.Scale(self, from_=1, to_=500, label="Frequency", orient=tk.VERTICAL, length=200)
+        self.frequency_slider.grid(row=0,rowspan=5, column=3, columnspan=2)
+        self.frequency_slider.set(220)
+        self.volume_slider = tk.Scale(self, from_=1, to_=0, resolution=0.05, label="Volume", orient=tk.VERTICAL, length=200)
+        self.volume_slider.grid(row=0,rowspan=5,column=5,columnspan=2)
         self.volume_slider.set(1)
 
         self.wave_list_box = tk.Listbox()
-        self.wave_list_box.pack()
+        self.wave_list_box.grid(row=0, rowspan=6,column=10,columnspan=4)
 
     def setup_worker(self):
 
@@ -125,26 +128,24 @@ class Synthesiser(tk.Tk):
         self.worker = worker
 
     def start_sound(self):
-
-        if not hasattr(self, "worker"):
+        if not hasattr(self, "worker") and len(self.wave_list) > 0:
             self.setup_worker()
             self.worker.start()
 
     def stop_sound(self):
-
-        self.worker.end_now = True
-        del self.worker
+        if hasattr(self, "worker"):
+            self.worker.end_now = True
+            del self.worker
 
     def stop_sound_exit(self):
         if hasattr(self, "worker"):
-
             self.worker.end_now=True
             sys.exit()
         else:
             sys.exit()
 
     def add_wave(self, frequency, shape, volume):
-        self.wave_list.append(volume * waveform(frequency, shape))
+        self.wave_list.append((volume, frequency, shape))
         self.wave_list_box.insert(tk.END, "Freq: " + str(frequency) + "Hz" + " " + "Shape: " + str(shape))
 
     def remove_wave(self, wave_index):
@@ -153,21 +154,23 @@ class Synthesiser(tk.Tk):
 
     def clear_waves(self):
         self.wave_list = []
-        self.wave_list_box.delete(0,tk.END)
-
-    def plot_waveform(self):
-        plt.plot(self.output_waveform())
-        plt.show()
+        self.wave_list_box.delete(0, tk.END)
+        self.stop_sound()
 
     def output_waveform(self):
-        wave = self.wave_list[0]
+        wave = self.wave_list[0][0] * waveform(self.wave_list[0][1], self.wave_list[0][2])
         for wavef in self.wave_list[1:]:
-            wave = np.add(wave, wavef)
+            wave = np.add(wave, wavef[0] * waveform(wavef[1], wavef[2]))
         return (1/len(self.wave_list))*wave
+
+    def plot_wave(self):
+        plt.plot(self.output_waveform())
+        plt.show()
 
 
 root = Synthesiser()
 
+# Stop LoopAudio thread on window exit
 root.protocol("WM_DELETE_WINDOW", root.stop_sound_exit)
 
 root.mainloop()
