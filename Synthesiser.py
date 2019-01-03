@@ -5,37 +5,12 @@ import numpy as np
 import pyaudio, sys, threading, math, time
 import tkinter as tk
 
-BITRATE = 44100
-CHUNK = 1024
+RATE = 44100
+CHUNK = 2048
 
-phase = 0
+con = 0
 
 
-def waveform(frequency, waveshape):
-    """
-    Generates wave as data array - frequency of datapoints dependend on bitrate (quality of waveform)
-    :param frequency: Frequency of wave
-    :param waveshape: Shape of wave (square, sine, sawtooth)
-    :return: Returns array containing wave data
-    """
-    global phase
-    ti = 1
-    f = frequency
-    t = np.linspace(0, ti, int(ti * BITRATE))
-
-    if waveshape == "sin":
-        sig = np.array(np.sin(2 * np.pi * (f * t + phase) + 5 * np.sin(2 * np.pi * 4 * t)), dtype=np.float32)
-        phase = math.modf(f * CHUNK / BITRATE + phase)[0]
-    elif waveshape == "sqr":
-        sig = np.array(signal.square(2 * np.pi * (f * t + phase)), dtype=np.float32)
-        phase = math.modf(f * CHUNK / BITRATE + phase)[0]
-    elif waveshape == "saw":
-        sig = np.array(signal.sawtooth(2 * np.pi * f * t + phase), dtype=np.float32)
-        phase = math.modf(f * CHUNK / BITRATE + phase)[0]
-    elif waveshape == "tri":
-        sig = np.array(signal.sawtooth(2 * np.pi * f * t + phase, width=0.5), dtype=np.float32)
-        phase = math.modf(f * CHUNK / BITRATE + phase)[0]
-    return sig
 
 
 class LoopWave(threading.Thread):
@@ -55,14 +30,26 @@ class LoopWave(threading.Thread):
         """
         Loops audio from waveform in seperate thread from tkinter GUI
         """
+        p = pyaudio.PyAudio()
+
+        def callback(in_data, frame_count, time_info, status):
+            data = np.array(self.master.output_waveform()).astype(np.float32).tostring()
+            return data, pyaudio.paContinue
+
+        stream = p.open(format=pyaudio.paFloat32,
+                        channels=1,
+                        rate=RATE,
+                        output=True,
+                        stream_callback=callback,
+                        frames_per_buffer=CHUNK
+                        )
+
         if not self.end_now:
-            p = pyaudio.PyAudio()
-            stream = p.open(format=pyaudio.paFloat32, channels=1, rate=BITRATE, output=True, frames_per_buffer=CHUNK)
+
+            stream.start_stream()
             while not self.end_now:
-                stream.write(np.array(self.master.output_waveform()).astype(np.float32).tostring())
+                time.sleep(0.01)
             stream.stop_stream()
-            stream.close()
-            p.terminate()
         elif self.end_now:
             self.master.stop_sound()
 
@@ -78,7 +65,8 @@ class Synthesiser(tk.Tk):
     """
     def __init__(self):
         super().__init__()
-        self.wave_list = []
+        self.harmonic_list = []
+        self.harmonic_number = len(self.harmonic_list)
         self.shape_list = [("sine", "sin", 0), ("square", "sqr", 1), ("sawtooth", "saw", 2), ("triangular", "tri", 3)]
         self.wave_shape = tk.StringVar()
         self.wave_shape.set("sin")
@@ -92,14 +80,12 @@ class Synthesiser(tk.Tk):
         self.plot_button = tk.Button(self, text="Plot wave", padx=5, pady=5, command=(lambda: self.plot_wave()))
         self.plot_button.grid(row=2, column=0)
 
-        self.add_wave_button = tk.Button(self, text="Add wave", padx=5, pady=5,
-                                         command=(lambda: self.add_wave(self.frequency_slider.get(),
-                                                                        self.wave_shape.get(),
-                                                                        self.volume_slider.get())))
+        self.add_wave_button = tk.Button(self, text="Add harmonic", padx=5, pady=5,
+                                         command=(lambda: self.add_harmonic()))
         self.add_wave_button.grid(row=0, column=1)
 
         self.remove_wave_button = tk.Button(self, text="Remove wave", padx=5, pady=5,
-                                            command = lambda: self.remove_wave(self.wave_list_box.curselection()[0]))
+                                            command = lambda: self.remove_wave())
         self.remove_wave_button.grid(row=1, column=1)
 
         self.clear_button = tk.Button(self, text="Clear waves", padx=5, pady=5, command=(lambda: self.clear_waves()))
@@ -118,16 +104,15 @@ class Synthesiser(tk.Tk):
         self.volume_slider.grid(row=0,rowspan=5,column=5,columnspan=2)
         self.volume_slider.set(1)
 
-        self.wave_list_box = tk.Listbox()
-        self.wave_list_box.grid(row=0, rowspan=6,column=10,columnspan=4)
-
     def setup_worker(self):
 
         worker = LoopWave(self)
         self.worker = worker
 
     def start_sound(self):
-        if not hasattr(self, "worker") and len(self.wave_list) > 0:
+        if len(self.harmonic_list) == 0:
+            self.harmonic_list.append(Wave(self.frequency_slider.get(), self.volume_slider.get(), self.wave_shape.get(), 0))
+        if not hasattr(self, "worker") and len(self.harmonic_list) > 0:
             self.setup_worker()
             self.worker.start()
 
@@ -143,28 +128,70 @@ class Synthesiser(tk.Tk):
         else:
             sys.exit()
 
-    def add_wave(self, frequency, shape, volume):
-        self.wave_list.append((volume, frequency, shape))
-        self.wave_list_box.insert(tk.END, "Freq: " + str(frequency) + "Hz" + " " + "Shape: " + str(shape))
+    def add_harmonic(self):
+        volume = 1/2**self.harmonic_number
+        print(volume)
+        self.harmonic_list.append(Wave((2 ** self.harmonic_number) * self.frequency_slider.get(),
+                                       volume * self.volume_slider.get(),
+                                       self.wave_shape.get(),
+                                       0))
+        self.harmonic_number += 1
 
-    def remove_wave(self, wave_index):
-        del self.wave_list[wave_index]
-        self.wave_list_box.delete(wave_index)
+    def remove_wave(self):
+        del self.harmonic_list[self.harmonic_number]
+        self.harmonic_number -= 1
 
     def clear_waves(self):
-        self.wave_list = []
-        self.wave_list_box.delete(0, tk.END)
         self.stop_sound()
+        self.harmonic_list = []
+        self.harmonic_number = 0
 
     def output_waveform(self):
-        wave = self.wave_list[0][0] * waveform(self.wave_list[0][1], self.wave_list[0][2])
-        for wavef in self.wave_list[1:]:
-            wave = np.add(wave, wavef[0] * waveform(wavef[1], wavef[2]))
-        return (1/len(self.wave_list))*wave
+        outwave = self.harmonic_list[0].waveform()
+        if len(self.harmonic_list) > 1:
+            for wave in self.harmonic_list[1:]:
+                outwave = np.add(wave.waveform(), outwave)
+        return (1/len(self.harmonic_list)) * outwave
 
     def plot_wave(self):
         plt.plot(self.output_waveform())
         plt.show()
+
+
+class Wave():
+    def __init__(self, frequency, volume, shape, phase):
+        self.frequency = frequency
+        self.volume = volume
+        self.shape = shape
+        self.phase = phase
+
+    def waveform(self):
+        """
+        Generates wave as data array - frequency of datapoints dependent on rate (quality of waveform)
+        :param frequency: Frequency of wave
+        :param waveshape: Shape of wave (square, sine, sawtooth)
+        :return: Returns array containing wave data
+        """
+        ti = CHUNK / RATE
+
+        t = np.linspace(0, ti, int(ti * RATE))
+        f = self.frequency
+
+        if self.shape == "sin":
+            sig = self.volume * (np.sin(2 * np.pi * (f * t + self.phase)))
+            self.phase = math.modf(f * CHUNK / RATE + self.phase)[0]
+        elif self.shape == "sqr":
+            sig = self.volume * np.array(signal.square(2 * np.pi * (f * t + self.phase)), dtype=np.float32)
+            self.phase = math.modf(f * CHUNK / RATE + self.phase)[0]
+        elif self.shape == "saw":
+            sig = self.volume * np.array(signal.sawtooth(2 * np.pi * (f * t + self.phase)), dtype=np.float32)
+            self.phase = math.modf(f * CHUNK / RATE + self.phase)[0]
+        elif self.shape == "tri":
+            sig = self.volume * np.array(signal.sawtooth(2 * np.pi * (f * t + self.phase), width=0.5), dtype=np.float32)
+            self.phase = math.modf(f * CHUNK / RATE + self.phase)[0]
+        return sig
+
+
 
 
 root = Synthesiser()

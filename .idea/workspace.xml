@@ -109,7 +109,7 @@
       </list>
     </option>
   </component>
-  <component name="RunManager" selected="Python.SynthesiserCallback">
+  <component name="RunManager" selected="Python.Synthesiser">
     <configuration name="Synthesiser" type="PythonConfigurationType" factoryName="Python" temporary="true">
       <module name="EMAT10007-Project" />
       <option name="INTERPRETER_OPTIONS" value="" />
@@ -217,8 +217,8 @@
     </configuration>
     <recent_temporary>
       <list>
-        <item itemvalue="Python.SynthesiserCallback" />
         <item itemvalue="Python.Synthesiser" />
+        <item itemvalue="Python.SynthesiserCallback" />
         <item itemvalue="Python.test" />
         <item itemvalue="Python.tw" />
         <item itemvalue="Python.waveform" />
